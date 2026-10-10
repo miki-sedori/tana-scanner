@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d1117">
+<title>棚前スキャナ</title>
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #0d1117; color: #e6edf3; font-family: -apple-system, "Hiragino Sans", sans-serif; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100dvh; }
+
+  /* カメラ部（上40%固定・連続スキャン） */
+  #cam-wrap { position: relative; height: 40dvh; flex-shrink: 0; background: #000; }
+  #video { width: 100%; height: 100%; object-fit: cover; }
+  #guide {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 88%; height: 140px; border: 2.5px solid rgba(255,255,255,.85); border-radius: 12px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,.22); pointer-events: none; transition: border-color .15s;
+  }
+  #guide.hit { border-color: #3fb950; box-shadow: 0 0 0 2000px rgba(63,185,80,.2); }
+  #cam-msg {
+    position: absolute; inset: 0; display: none; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center; background: #0d1117; padding: 24px; text-align: center; z-index: 2;
+  }
+  #cam-msg.show { display: flex; }
+  #status {
+    position: absolute; top: calc(env(safe-area-inset-top) + 8px); left: 50%; transform: translateX(-50%);
+    background: rgba(13,17,23,.72); padding: 5px 11px; border-radius: 14px; font-size: 10.5px;
+    line-height: 1.45; max-width: 94%; text-align: center; font-variant-numeric: tabular-nums;
+  }
+  .btn.resume { background: #238636; color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
+  /* ズーム・ライト（対応端末でだけ出る） */
+  #cam-ctl {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 8px; z-index: 2;
+  }
+  .cbtn {
+    background: rgba(13,17,23,.66); color: #e6edf3; border: 1px solid rgba(255,255,255,.22);
+    border-radius: 999px; padding: 9px 12px; font-size: 13px; font-weight: 700; min-width: 56px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .cbtn:active { opacity: .65; }
+  .cbtn.on { background: #d29922; color: #0d1117; border-color: #d29922; }
+
+  /* リストヘッダー */
+  #list-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 14px; background: #161b22; border-top: 1px solid #30363d; border-bottom: 1px solid #21262d;
+    font-size: 12.5px; color: #8b949e; flex-shrink: 0;
+  }
+  .hbtn { background: none; border: 1px solid #30363d; color: #c9d1d9; border-radius: 8px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; }
+  .hbtn:active { opacity: .7; }
+  #list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: env(safe-area-inset-bottom); }
+  /* 診断バー（カメラが死んでいても必ず見える場所に置く） */
+  #diag {
+    flex-shrink: 0; padding: 7px 14px; background: #010409; border-bottom: 1px solid #21262d;
+    font-size: 13px; font-weight: 700; color: #58a6ff; font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  #diag.err { color: #f85149; white-space: normal; }
+  .empty { padding: 28px 16px; text-align: center; color: #484f58; font-size: 13.5px; line-height: 1.7; }
+
+  .card {
+    display: flex; flex-direction: column; gap: 9px; padding: 11px 14px; border-bottom: 1px solid #1b212a; background: #0d1117;
+    animation: slidein .18s ease-out;
+  }
+  .card .row { display: flex; gap: 12px; }
+  @keyframes slidein { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .card .thumb {
+    width: 56px; height: 80px; flex-shrink: 0; border-radius: 6px; background: #21262d;
+    object-fit: cover; display: flex; align-items: center; justify-content: center;
+    font-size: 24px; color: #484f58; overflow: hidden;
+  }
+  .card .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .card .name {
+    font-size: 14.5px; font-weight: 700; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .card .name.dim { color: #8b949e; font-weight: 500; }
+  .card .sub { font-size: 11.5px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .code { font-size: 11px; color: #58606a; font-variant-numeric: tabular-nums; }
+  .card .acts { display: flex; gap: 8px; margin-top: auto; padding-top: 5px; }
+  .card .acts a {
+    flex: 1; text-align: center; padding: 9px 4px; border-radius: 9px; font-size: 13.5px; font-weight: 700;
+    color: #fff; text-decoration: none; max-width: 110px;
+  }
+  .card .acts a:active { opacity: .7; }
+  .a-keepa { background: #1f6feb; }
+  .a-amazon { background: #d29922; color: #1c1500 !important; }
+  .a-bookoff { background: #e5534b; }
+  .a-mercari { background: #6e40c9; }
+  .badge-price { font-size: 13px; font-weight: 700; color: #3fb950; }
+
+  /* カード内Keepaグラフ（Amacode風・その場で相場が見える） */
+  .card .graph-wrap { border-radius: 8px; overflow: hidden; background: #fff; min-height: 40px; }
+  .card .graph { display: block; width: 100%; height: auto; }
+
+  /* 履歴ビュー（全画面オーバーレイ） */
+  #hist-view {
+    position: fixed; inset: 0; background: #0d1117; z-index: 10; display: none; flex-direction: column;
+  }
+  #hist-view.show { display: flex; }
+  #hist-head {
+    padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  #hist-head .row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #hist-head .ttl { font-size: 15.5px; font-weight: 700; }
+  #hist-search {
+    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 9px;
+    padding: 9px 12px; font-size: 14px; color: #e6edf3;
+  }
+  #hist-search::placeholder { color: #484f58; }
+  #hist-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: env(safe-area-inset-bottom); }
+  .day-head {
+    position: sticky; top: 0; background: #161b22; padding: 7px 14px; font-size: 12.5px; font-weight: 700;
+    color: #8b949e; border-bottom: 1px solid #21262d; z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="cam-wrap">
+    <video id="video" playsinline muted autoplay></video>
+    <div id="guide"></div>
+    <div id="status">起動中…</div>
+    <div id="cam-ctl">
+      <button class="cbtn" id="btn-zoom" style="display:none;">🔍 ×1</button>
+      <button class="cbtn" id="btn-torch" style="display:none;">💡</button>
+    </div>
+    <div id="cam-msg">
+      <div id="cam-msg-text">カメラを起動します</div>
+      <button class="btn resume" id="cam-retry" style="padding:14px 40px;">カメラを起動</button>
+    </div>
+  </div>
+  <div id="list-head">
+    <span id="count">連続スキャン</span>
+    <span style="display:flex; gap:8px;">
+      <button class="hbtn" id="photo-btn">📷 写真</button>
+      <button class="hbtn" id="open-hist">📚 履歴</button>
+      <button class="hbtn" id="clear">クリア</button>
+    </span>
+    <input type="file" id="photo-input" accept="image/*" multiple style="display:none;">
+  </div>
+  <div id="diag">起動中…</div>
+  <div id="list"><div class="empty">バーコード（978…）か<br>ブックオフのシールを枠に入れてください</div></div>
+</div>
+
+<!-- 履歴（全部・日付ごと） -->
+<div id="hist-view">
+  <div id="hist-head">
+    <div class="row1">
+      <span class="ttl">📚 スキャン履歴（全部）</span>
+      <span style="display:flex; gap:8px;">
+        <button class="hbtn" id="hist-csv">CSV</button>
+        <button class="hbtn" id="hist-close">✕ 閉じる</button>
+      </span>
+    </div>
+    <input id="hist-search" type="search" placeholder="書名・著者・ISBNで検索" autocomplete="off">
+  </div>
+  <div id="hist-list"></div>
+</div>
+
+<script src="zxing-wasm-reader.js?v=5"></script>
+<script>
+(async () => {
+  const VERSION = 'v3.2';
+  const video = document.getElementById('video');
+  const statusEl = document.getElementById('status');
+  const diagEl = document.getElementById('diag');
+  const zoomBtn = document.getElementById('btn-zoom');
+  const torchBtn = document.getElementById('btn-torch');
+
+  // エラーは無言で死なせず診断バーに赤で出す
+  diagEl.textContent = '📊 ' + VERSION + ' 起動中…（この行が診断バー。カメラが動くと数字に変わります）';
+  window.addEventListener('error', (e) => {
+    diagEl.classList.add('err');
+    diagEl.textContent = '🚨 エラー: ' + (e.message || e.type) + ' @' + (e.lineno || '?');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    diagEl.classList.add('err');
+    diagEl.textContent = '🚨 エラー: ' + (e.reason && e.reason.message || e.reason || '不明');
+  });
+  const guide = document.getElementById('guide');
+  const camMsg = document.getElementById('cam-msg');
+  const camMsgText = document.getElementById('cam-msg-text');
+  const camRetry = document.getElementById('cam-retry');
+  const listEl = document.getElementById('list');
+  const countEl = document.getElementById('count');
+  const clearBtn = document.getElementById('clear');
+  const histView = document.getElementById('hist-view');
+  const histList = document.getElementById('hist-list');
+  const histSearch = document.getElementById('hist-search');
+
+  // ---- WASM版ZXing 初期化 ----
+  const { readBarcodes, prepareZXingModule } = ZXingWASM;
+  await prepareZXingModule({
+    overrides: { locateFile: (path, prefix) => path.endsWith('.wasm') ? 'zxing_reader.wasm' : prefix + path },
+    fireImmediately: true,
+  });
+
+  let stream = null;
+  let track = null;
+  let running = false;
+  let camLabel = '';      // 実際に取れた解像度（推測でなく実測を出す）
+  let zoomVal = 1, torchOn = false, zoomCaps = null, torchCap = false;
+  let seekStart = 0, lastMs = 0, lastPPM = 0;
+  // 常時カウンター（読めない時こそ状態が見えるように出す）
+  let frames = 0, fpsAt = 0, fpsVal = 0, decSum = 0, decN = 0, hitCount = 0, roiLabel = '';
+  const lastSeen = new Map();
+  const DEDUP_MS = 8000;
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  // ---- 日付ユーティリティ ----
+  function todayStr() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+  }
+  const WD = ['日','月','火','水','木','金','土'];
+  function dayLabel(d) {
+    const [y,m,dd] = d.split('-').map(Number);
+    return `${y}年${m}月${dd}日（${WD[new Date(y, m-1, dd).getDay()]}）`;
+  }
+
+  // ---- ISBN変換・検証 ----
+  function isbn13to10(isbn13) {
+    if (!/^978\d{10}$/.test(isbn13)) return null;
+    const core = isbn13.slice(3, 12);
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += (10 - i) * Number(core[i]);
+    const r = (11 - (sum % 11)) % 11;
+    return core + (r === 10 ? 'X' : String(r));
+  }
+  function isbn10to13(isbn10) {
+    const core = '978' + isbn10.slice(0, 9);
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += Number(core[i]) * (i % 2 === 0 ? 1 : 3);
+    return core + String((10 - (sum % 10)) % 10);
+  }
+  function validEan13(s) {
+    if (!/^\d{13}$/.test(s)) return false;
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += Number(s[i]) * (i % 2 === 0 ? 1 : 3);
+    return (10 - (sum % 10)) % 10 === Number(s[12]);
+  }
+  function validIsbn10(s) {
+    if (!/^\d{9}[\dX]$/i.test(s)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += (10 - i) * Number(s[i]);
+    sum += (s[9].toUpperCase() === 'X') ? 10 : Number(s[9]);
+    return sum % 11 === 0;
+  }
+  function extractIsbn(text) {
+    const t = text.toUpperCase();
+    const m13 = t.match(/97[89]\d{10}/g);
+    if (m13) { for (const c of m13) if (validEan13(c)) return { isbn13: c }; }
+    const m10 = t.match(/\d{9}[\dX]/g);
+    if (m10) {
+      const hits = m10.filter(validIsbn10);
+      const jp = hits.find(c => c[0] === '4');
+      if (jp) return { isbn10: jp };
+      if (hits.length) return { isbn10: hits[0] };
+    }
+    return null;
+  }
+
+  // ---- 読み取り成功音・フラッシュ ----
+  let audioCtx = null;
+  function beep() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = 1440; g.gain.value = 0.08;
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(); o.stop(audioCtx.currentTime + 0.09);
+    } catch (e) {}
+  }
+  function flash() {
+    guide.classList.add('hit');
+    setTimeout(() => guide.classList.remove('hit'), 500);
+  }
+
+  // ---- 全件履歴ストア（無制限保存・クリアでも消えない） ----
+  const HIST_KEY = 'tana_scanner_all_v3';
+  let all = [];
+  try { all = JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch (e) {}
+  // 旧v2リストからの移行（1回だけ）
+  try {
+    const old = JSON.parse(localStorage.getItem('tana_scanner_list_v2'));
+    if (old && old.length) {
+      const d = todayStr();
+      old.forEach(o => all.push({ ...o, d: o.d || d }));
+      localStorage.removeItem('tana_scanner_list_v2');
+    }
+  } catch (e) {}
+  function persist() {
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(all)); }
+    catch (e) {
+      // 容量超過時：書影URLを間引いて再挑戦→それでもダメなら最古500件を落とす
+      try {
+        all.slice(500).forEach(x => delete x.cover);
+        localStorage.setItem(HIST_KEY, JSON.stringify(all));
+      } catch (e2) {
+        all = all.slice(0, all.length - 500);
+        try { localStorage.setItem(HIST_KEY, JSON.stringify(all)); } catch (e3) {}
+      }
+    }
+  }
+
+  // ---- openBD 書誌ルックアップ（ISBNごとにキャッシュ・失敗時はリトライせず降格） ----
+  const BIB_KEY = 'tana_scanner_bib_v1';
+  let bibCache = {};
+  try { bibCache = JSON.parse(localStorage.getItem(BIB_KEY)) || {}; } catch (e) {}
+  async function lookupBib(isbn13) {
+    if (bibCache[isbn13]) return bibCache[isbn13];
+    try {
+      const res = await fetch(`https://api.openbd.jp/v1/get?isbn=${isbn13}`);
+      const json = await res.json();
+      const s = json && json[0] && json[0].summary;
+      if (!s) return null;
+      const bib = { title: s.title || '', author: (s.author || '').replace(/／著|／作|／原作/g, ''), pub: s.publisher || '', cover: s.cover || '' };
+      bibCache[isbn13] = bib;
+      try { localStorage.setItem(BIB_KEY, JSON.stringify(bibCache)); } catch (e) {}
+      return bib;
+    } catch (e) { return null; }
+  }
+
+  // ---- カード描画（メイン・履歴 共用） ----
+  function cardHtml(it) {
+    const thumb = it.cover
+      ? `<img class="thumb" src="${it.cover}" loading="lazy" onerror="this.outerHTML='<div class=\\'thumb\\'>📕</div>'">`
+      : `<div class="thumb">${it.bo ? '🏷' : '📕'}</div>`;
+    const name = it.title
+      ? `<div class="name">${it.title}</div>`
+      : it.bo
+        ? `<div class="name dim">ブックオフシール — 商品ページで確認</div>`
+        : `<div class="name dim">書誌データなし</div>`;
+    const sub = it.bo
+      ? `<div class="sub"><span class="badge-price">値札 ¥${(it.price || 0).toLocaleString()}</span></div>`
+      : `<div class="sub">${[it.author, it.pub].filter(Boolean).join('・') || '&nbsp;'}</div>`;
+    const code = `<div class="code">${it.t}　${it.bo ? it.bo : (it.asin ? it.code + ' / ' + it.asin : it.code)}</div>`;
+    // メルカリ横断検索（書名があれば書名・なければコード）— アマサーチの電脳リンク方式
+    const mercariQ = encodeURIComponent(it.title || it.code || '');
+    const mercari = mercariQ ? `<a class="a-mercari" href="https://jp.mercari.com/search?keyword=${mercariQ}&status=on_sale" target="_blank">メルカリ</a>` : '';
+    let acts = '';
+    if (it.bo) {
+      acts = `<a class="a-bookoff" href="https://shopping.bookoff.co.jp/used/${it.bo}" target="_blank">BookOff</a>`;
+    } else if (it.asin) {
+      acts = `<a class="a-keepa" href="https://keepa.com/#!product/5-${it.asin}" target="_blank">Keepa</a>` +
+             `<a class="a-amazon" href="https://www.amazon.co.jp/dp/${it.asin}" target="_blank">Amazon</a>` + mercari;
+    } else {
+      acts = `<a class="a-keepa" href="https://keepa.com/#!search/5-${it.code}" target="_blank">Keepa</a>` +
+             `<a class="a-amazon" href="https://www.amazon.co.jp/s?k=${it.code}" target="_blank">Amazon</a>` + mercari;
+    }
+    // Keepaグラフ埋め込み（Amacode風）：ランキング＋中古価格・直近90日。タップでKeepa本体へ
+    const graph = it.asin
+      ? `<a class="graph-wrap" href="https://keepa.com/#!product/5-${it.asin}" target="_blank">` +
+        `<img class="graph" loading="lazy" src="https://graph.keepa.com/pricehistory.png?asin=${it.asin}&domain=co.jp&salesrank=1&amazon=1&new=1&used=1&range=90&width=1100&height=420" ` +
+        `onerror="this.parentElement.style.display='none'"></a>`
+      : '';
+    return `<div class="row">${thumb}<div class="body">${name}${sub}${code}<div class="acts">${acts}</div></div></div>${graph}`;
+  }
+
+  // ---- メイン画面（今日の分だけ表示） ----
+  let hiddenBefore = null;   // 「クリア」した時刻より前の今日分は表示から外す（履歴には残る）
+  try { hiddenBefore = localStorage.getItem('tana_scanner_hidden_before'); } catch (e) {}
+  function todayItems() {
+    const d = todayStr();
+    return all.filter(x => x.d === d && (!hiddenBefore || x.id > hiddenBefore));
+  }
+  function renderMain() {
+    const items = todayItems();
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty">バーコード（978…）か<br>ブックオフのシールを枠に入れてください</div>';
+      countEl.textContent = '連続スキャン';
+      return;
+    }
+    countEl.textContent = `今日 ${items.length}冊`;
+    listEl.innerHTML = items.map(it => `<div class="card" data-id="${it.id}">${cardHtml(it)}</div>`).join('');
+  }
+  function updateCard(it) {
+    document.querySelectorAll(`.card[data-id="${it.id}"]`).forEach(el => { el.innerHTML = cardHtml(it); });
+  }
+
+  let seq = Date.now();
+  function addItem(it) {
+    it.id = 'i' + (++seq);
+    it.d = todayStr();
+    const now = new Date();
+    it.t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    all.unshift(it);
+    persist(); renderMain();
+    listEl.scrollTop = 0;
+    beep(); flash();
+    if (it.isbn13) {
+      lookupBib(it.isbn13).then(bib => {
+        if (!bib) return;
+        Object.assign(it, bib);
+        persist(); updateCard(it);
+      });
+    }
+  }
+
+  // ---- 履歴ビュー（全部・日付グループ・検索・CSV） ----
+  function renderHist() {
+    const q = histSearch.value.trim().toLowerCase();
+    const src = q
+      ? all.filter(x => [x.title, x.author, x.pub, x.code, x.asin, x.bo].filter(Boolean).join(' ').toLowerCase().includes(q))
+      : all;
+    if (!src.length) {
+      histList.innerHTML = `<div class="empty">${q ? '該当なし' : 'まだ履歴がありません'}</div>`;
+      return;
+    }
+    let html = '', curDay = '';
+    for (const it of src) {
+      if (it.d !== curDay) {
+        curDay = it.d;
+        const n = src.filter(x => x.d === curDay).length;
+        html += `<div class="day-head">${dayLabel(curDay)}　${n}冊</div>`;
+      }
+      html += `<div class="card" data-id="${it.id}">${cardHtml(it)}</div>`;
+    }
+    histList.innerHTML = html;
+  }
+  document.getElementById('open-hist').addEventListener('click', () => {
+    histSearch.value = '';
+    renderHist();
+    histView.classList.add('show');
+  });
+  document.getElementById('hist-close').addEventListener('click', () => histView.classList.remove('show'));
+  histSearch.addEventListener('input', renderHist);
+
+  // CSV書き出し（UTF-8 BOM付き＝Excelで文字化けしない）
+  document.getElementById('hist-csv').addEventListener('click', () => {
+    if (!all.length) return;
+    const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const rows = [['日付','時刻','書名','著者','出版社','ISBN13','ASIN','BookOffコード','値札価格'].map(esc).join(',')];
+    for (const it of all) {
+      rows.push([it.d, it.t, it.title || '', it.author || '', it.pub || '', it.isbn13 || it.code || '', it.asin || '', it.bo || '', it.price || ''].map(esc).join(','));
+    }
+    const blob = new Blob(['﻿' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `棚前スキャン履歴_${todayStr().replace(/-/g, '')}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+
+  // ---- ヒット処理（連続スキャン：止まらない） ----
+  function onScan(code, format) {
+    const now = Date.now();
+    const seen = lastSeen.get(code);
+    if (seen && now - seen < DEDUP_MS) return;
+    lastSeen.set(code, now);
+
+    const found = extractIsbn(code);
+    if (found) {
+      const isbn13 = found.isbn13 || isbn10to13(found.isbn10);
+      const asin = found.isbn10 || isbn13to10(isbn13);
+      addItem({ code: isbn13, isbn13, asin });
+    } else if (format === 'Code128' && /^\d{17}$/.test(code)) {
+      // ブックオフのインストアシール：先頭10桁=商品コード＋末尾7桁=値札価格（2026-07-18実物解読）
+      addItem({ bo: code.slice(0, 10), price: parseInt(code.slice(10), 10) || null });
+    } else if (validEan13(code) && (code.startsWith('45') || code.startsWith('49'))) {
+      addItem({ code, asin: null });
+    }
+  }
+
+  // ---- デコードループ（v3）----
+  // 2026-08-09 実測に基づく設計：
+  //  ・504サンプルのベンチで「2.5px/モジュール以上なら100%読める」と判明。エンジン設定は精度に無関係で速度だけ6倍差
+  //  ・実機（4K）では 6.25px/モジュール 出ていた → ROIを1/2に縮めても3.1px残る。処理量が1/4になり fps が上がる
+  //  ・形式を Code128（BookOffシール）と EAN-13（ISBN/JAN）に限定＝2.4ms→0.4ms
+  // 映像は object-fit:cover で切り取られて表示されるので、
+  // 画面の緑枠が映像のどこに当たるかを毎回計算する（枠＝読む範囲を一致させる）
+  function guideRectInVideo() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const cw = video.clientWidth, ch = video.clientHeight;
+    if (!vw || !cw) return null;
+    const s = Math.max(cw / vw, ch / vh);
+    const offX = (vw * s - cw) / 2, offY = (vh * s - ch) / 2;
+    const g = guide.getBoundingClientRect(), v = video.getBoundingClientRect();
+    const x = Math.round((g.left - v.left + offX) / s);
+    const y = Math.round((g.top - v.top + offY) / s);
+    const w = Math.round(g.width / s), h = Math.round(g.height / s);
+    return {
+      x: Math.max(0, Math.min(vw - 1, x)), y: Math.max(0, Math.min(vh - 1, y)),
+      w: Math.max(1, Math.min(vw - Math.max(0, x), w)), h: Math.max(1, Math.min(vh - Math.max(0, y), h)),
+    };
+  }
+  function moduleCount(text, format) {
+    if (format === 'Code128') { const n = Math.ceil(text.length / 2) + (text.length % 2 ? 1 : 0); return 11 + 11 * n + 11 + 13; }
+    if (format === 'EAN-13') return 95;
+    return null;
+  }
+  async function decodeLoop() {
+    if (!running) return;
+    if (video.readyState >= 2 && video.videoWidth) {
+      if (!seekStart) seekStart = performance.now();
+      const roi = guideRectInVideo();
+      if (!roi) { video.requestVideoFrameCallback ? video.requestVideoFrameCallback(() => decodeLoop()) : setTimeout(decodeLoop, 50); return; }
+      const scale = roi.w >= 2000 ? 0.7 : 1;              // 4K相当のときだけ落とす（0.7で約4.4px/モジュール残る）
+      const cw = Math.floor(roi.w * scale), ch = Math.floor(roi.h * scale);
+      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+      ctx.drawImage(video, roi.x, roi.y, roi.w, roi.h, 0, 0, cw, ch);
+      roiLabel = cw + '×' + ch;
+      const t0 = performance.now();
+      try {
+        const results = await readBarcodes(ctx.getImageData(0, 0, cw, ch), {
+          formats: ['Code128', 'EAN-13'],
+          tryHarder: true, tryRotate: true, tryInvert: false, maxNumberOfSymbols: 1,
+        });
+        if (decN >= 60) { decSum = 0; decN = 0; }
+        decSum += performance.now() - t0; decN++;
+        for (const r of results) {
+          if (/^19[12]\d{10}$/.test(r.text)) continue;    // 本の下段（雑誌価格コード）は無視
+          const p = r.position, mods = moduleCount(r.text, r.format);
+          if (p && p.topLeft && p.topRight && mods) {
+            lastPPM = Math.hypot(p.topRight.x - p.topLeft.x, p.topRight.y - p.topLeft.y) / mods;
+          }
+          lastMs = Math.round(performance.now() - seekStart);
+          seekStart = 0;
+          hitCount++;
+          onScan(r.text, r.format);
+          updateStatus();
+        }
+      } catch (e) {}
+
+      // 1秒ごとに fps を出す。読めない時でも動いていることが見えるようにする
+      frames++;
+      const now = performance.now();
+      if (!fpsAt) fpsAt = now;
+      if (now - fpsAt >= 1000) {
+        fpsVal = frames * 1000 / (now - fpsAt);
+        frames = 0; fpsAt = now;
+        updateStatus();
+      }
+    }
+    ('requestVideoFrameCallback' in HTMLVideoElement.prototype)
+      ? video.requestVideoFrameCallback(() => decodeLoop())
+      : setTimeout(decodeLoop, 30);
+  }
+
+  function updateStatus() {
+    const p = [VERSION];
+    if (camLabel) p.push(camLabel + (video.videoWidth ? ' ' + video.videoWidth + '×' + video.videoHeight : ''));
+    if (roiLabel) p.push('枠' + roiLabel);
+    if (fpsVal) p.push(fpsVal.toFixed(0) + 'fps');
+    if (decN) p.push((decSum / decN).toFixed(1) + 'ms/回');
+    p.push('読取' + hitCount + '件');
+    if (lastPPM) p.push('★' + lastPPM.toFixed(1) + 'px');
+    if (lastMs) p.push(lastMs + 'ms');
+    const line = p.join(' · ');
+    statusEl.textContent = line;
+    if (!diagEl.classList.contains('err')) diagEl.textContent = '📊 ' + line;
+  }
+
+  // 高い解像度から順に要求する。4Kが通ると寄りが浅くても読める（2026-08-09 実機で4K成立を確認）
+  const CAM_MODES = [
+    { label: '4K', w: 3840, h: 2160 },
+    { label: '2.5K', w: 2560, h: 1440 },
+    { label: 'FHD', w: 1920, h: 1080 },
+  ];
+
+  async function startCamera() {
+    camMsg.classList.remove('show');
+    statusEl.textContent = 'カメラ起動中…';
+    try {
+      let lastErr = null;
+      for (const m of CAM_MODES) {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: { ideal: 'environment' }, frameRate: { ideal: 30 },
+                     width: { ideal: m.w }, height: { ideal: m.h } },
+          });
+          const st = s.getVideoTracks()[0].getSettings();
+          const got = Math.max(st.width || 0, st.height || 0);
+          if (got >= m.w * 0.8 || m === CAM_MODES[CAM_MODES.length - 1]) {
+            stream = s; camLabel = m.label;
+            break;
+          }
+          s.getTracks().forEach(t => t.stop());
+        } catch (e) {
+          lastErr = e;                                  // 拒否(NotAllowedError)を握りつぶさない
+          if (e && e.name === 'NotAllowedError') break; // 拒否なら下位解像度を試しても無駄
+        }
+      }
+      if (!stream) throw (lastErr || new Error('NoCamera'));
+      track = stream.getVideoTracks()[0];
+      video.srcObject = stream;
+      await video.play();
+      running = true;
+      diagEl.classList.remove('err');   // 以前の拒否表示が残らないように戻す
+
+      // ズーム・ライトは対応端末だけボタンを出す（iOS Safariで1〜10倍対応を実測）
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      zoomCaps = caps.zoom || null;
+      torchCap = !!caps.torch;
+      zoomBtn.style.display = zoomCaps ? '' : 'none';
+      torchBtn.style.display = torchCap ? '' : 'none';
+      if (zoomCaps) { zoomVal = Math.max(zoomCaps.min || 1, 1); zoomBtn.textContent = '🔍 ×' + zoomVal; }
+      if ((caps.focusMode || []).includes('continuous')) {
+        try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+      }
+
+      seekStart = 0;
+      updateStatus();
+      decodeLoop();
+    } catch (err) {
+      running = false;
+      // 2026-08-09の実機詰まり：NotAllowedErrorの正体はSafariのサイト別カメラ拒否。
+      // 押しても直らない「もう一度押して」ではなく、直す場所そのものを画面に出す
+      if (err && err.name === 'NotAllowedError') {
+        camMsgText.innerHTML =
+          'カメラがブロックされています。<br><br>' +
+          '<b>直し方（30秒）</b><br>' +
+          '① アドレスバー左の「ぁあ」をタップ<br>' +
+          '②「Webサイトの設定」<br>' +
+          '③ カメラ →「許可」<br>' +
+          '④ 下のボタンを押す';
+        camMsgText.style.textAlign = 'left';
+        camMsgText.style.lineHeight = '1.9';
+        diagEl.classList.add('err');
+        diagEl.textContent = '🚨 カメラがSafariにブロックされています（ぁあ → Webサイトの設定 → カメラ → 許可）';
+      } else {
+        camMsgText.textContent = 'カメラを起動できませんでした（' + (err && err.name || 'エラー') + '）';
+      }
+      camMsg.classList.add('show');
+      statusEl.textContent = '停止中';
+    }
+  }
+  function stopCamera() {
+    running = false;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    track = null; seekStart = 0;
+    video.srcObject = null;
+  }
+
+  // ズームは押すたびに 1 → 2 → 3 → 5 → 1 と回す（上限は端末の実力に丸める）
+  const ZOOM_STEPS = [1, 2, 3, 5];
+  zoomBtn.addEventListener('click', async () => {
+    if (!track || !zoomCaps) return;
+    const max = zoomCaps.max || 1;
+    const steps = ZOOM_STEPS.filter(z => z <= max);
+    const next = steps[(steps.indexOf(zoomVal) + 1) % steps.length] || 1;
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: next }] });
+      zoomVal = next;
+      zoomBtn.textContent = '🔍 ×' + next;
+    } catch (e) { zoomBtn.textContent = '🔍 —'; }
+  });
+
+  torchBtn.addEventListener('click', async () => {
+    if (!track || !torchCap) return;
+    torchOn = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      torchBtn.classList.toggle('on', torchOn);
+    } catch (e) { torchOn = false; torchBtn.classList.remove('on'); }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { if (!running) startCamera(); }
+    else stopCamera();
+  });
+  window.addEventListener('pageshow', () => { if (!running) startCamera(); });
+
+  // ---- 写真から読む（カメラロールの画像内のバーコードを解析） ----
+  const photoBtn = document.getElementById('photo-btn');
+  const photoInput = document.getElementById('photo-input');
+  photoBtn.addEventListener('click', () => photoInput.click());
+  photoInput.addEventListener('change', async () => {
+    const files = [...photoInput.files];
+    photoInput.value = '';
+    if (!files.length) return;
+    photoBtn.textContent = '解析中…';
+    let hits = 0;
+    for (const f of files) {
+      try {
+        const bmp = await createImageBitmap(f);
+        // 長辺2800pxに収めて解析（速度とメモリの兼ね合い）
+        const scale = Math.min(1, 2800 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+        const cx = c.getContext('2d');
+        cx.drawImage(bmp, 0, 0, c.width, c.height);
+        const results = await readBarcodes(cx.getImageData(0, 0, c.width, c.height), {
+          formats: ['EAN-13', 'Code128', 'Codabar', 'Code39', 'ITF', 'EAN-8', 'UPC-A'],
+          tryHarder: true, tryRotate: true, tryInvert: true, maxNumberOfSymbols: 8,
+        });
+        for (const r of results) {
+          if (/^19[12]\d{10}$/.test(r.text)) continue;
+          const before = all.length;
+          onScan(r.text, r.format);
+          if (all.length > before) hits++;
+        }
+      } catch (e) {}
+    }
+    photoBtn.textContent = '📷 写真';
+    if (!hits) alert('バーコードを検出できませんでした。シール部分が大きく写った写真で試してください');
+  });
+
+  camRetry.addEventListener('click', startCamera);
+  clearBtn.addEventListener('click', () => {
+    const items = todayItems();
+    if (!items.length) return;
+    if (confirm('今日の表示をクリアしますか？（履歴には全部残ります）')) {
+      hiddenBefore = items[0].id;
+      try { localStorage.setItem('tana_scanner_hidden_before', hiddenBefore); } catch (e) {}
+      renderMain();
+    }
+  });
+
+  renderMain();
+  startCamera();
+})();
+</script>
+</body>
+</html>
